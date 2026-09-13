@@ -18,5 +18,3 @@ db_port                  = 5432
 multi_az                 = false
 backup_retention_period  = 0
 skip_final_snapshot      = true
-
-# db_password = "Defina via Secret do GitHub (TF_VAR_db_password ou DB_PASSWORD)"

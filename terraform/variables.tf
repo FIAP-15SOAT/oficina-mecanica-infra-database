@@ -72,12 +72,6 @@ variable "db_username" {
   default     = "techchallenge"
 }
 
-variable "db_password" {
-  description = "Master database password"
-  type        = string
-  sensitive   = true
-}
-
 variable "db_port" {
   description = "PostgreSQL database port"
   type        = number
