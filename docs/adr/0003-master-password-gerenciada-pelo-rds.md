@@ -93,7 +93,9 @@ estável; e campos adicionais do Secret não quebram os consumidores.
 **Negativas.** O CD da API passa a depender da disponibilidade das APIs RDS e
 Secrets Manager. O Secret Kubernetes materializa a URL dentro do cluster e deve
 ser tratado como dado sensível. Sem rotação automática, uma troca manual ainda
-exige nova execução do CD para atualizar os Pods.
+exige nova execução do CD para materializar a URL e renovação explícita dos Pods
+existentes. No escopo greenfield, não há annotation de versão; com a mesma imagem,
+a atualização isolada do Secret não força um novo rollout.
 
 ## Referências
 
