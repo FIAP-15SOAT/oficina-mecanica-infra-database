@@ -2,7 +2,7 @@
 
 ## Status
 
-Aceito — 2026-09-07
+Substituído pelo [ADR 0003](0003-master-password-gerenciada-pelo-rds.md) — 2026-09-13
 
 ## Contexto
 

@@ -96,8 +96,9 @@ completo no YAML, com a versão correspondente registrada em comentário.
    `steps.aws_creds.outcome == 'success'`. Primeiro faz
    `terraform init -reconfigure -no-color` para habilitar o backend remoto;
    depois `terraform plan -no-color` consulta a AWS e os states necessários e
-   mostra as mudanças propostas. Injeta `TF_VAR_db_password` com `DB_PASSWORD` ou `TF_VAR_DB_PASSWORD`, nessa ordem, e valor fictício somente se ambos faltarem. Esse fallback existe apenas no preview do CI, não representa a senha implantada e não é usado no CD. Uma falha de init/plan nessa
-   condição **falha o job**; a tolerância não cobre erros depois de autenticar.
+   mostra as mudanças propostas. Não recebe nem deriva senha: a master password
+   é gerada e mantida pelo RDS. Uma falha de init/plan nessa condição **falha o
+   job**; a tolerância não cobre erros depois de autenticar.
 8. **Note skipped plan in job summary**: executa somente se
    `steps.aws_creds.outcome == 'failure'`. Acrescenta ao `$GITHUB_STEP_SUMMARY`
    a informação de que o plan foi pulado, mantendo fmt/validate como evidência
@@ -150,17 +151,22 @@ manual é avaliado no job inteiro antes desses steps.
 5. **Terraform Validate**: executa `terraform validate -no-color` antes do
    plan. O CD não inclui um step de fmt; a formatação pertence ao CI.
 6. **Terraform Plan**: executa `terraform plan -no-color`, exibindo as
-   alterações para a infraestrutura e consultando as dependências remotas.
-   Injeta `TF_VAR_db_password` a partir de `secrets.DB_PASSWORD || secrets.TF_VAR_DB_PASSWORD`, sem fallback fictício. Um dos dois Secrets deve fornecer a senha real do banco.
+   alterações para a infraestrutura e consultando as dependências remotas. Não
+   há input, Secret do GitHub ou fallback de senha.
 7. **Terraform Apply**: executa `terraform apply -auto-approve -no-color`.
-   Repete a mesma injeção de senha, sem fallback, e aplica RDS, subnet group, SG, segredo e versão da credencial no Secrets Manager. Não há arquivo de plano salvo por `-out`: o apply calcula
-   seu próprio plano, em vez de reaplicar um artifact do step anterior.
+   Aplica subnet group, SG e RDS com master password gerenciada pelo serviço,
+   além da configuração explícita de rotação desabilitada. Não há arquivo de
+   plano salvo por `-out`: o apply calcula seu próprio plano, em vez de reaplicar
+   um artifact do step anterior.
 
 Uma falha interrompe a sequência e falha o job. Não há upload de artifact de
 plano, etapa de destroy, migration ou deploy da aplicação nesse workflow.
 `TF_IN_AUTOMATION=true` é definido no CD para o uso automatizado da CLI.
 
-A stack precisa do state de infra-base. Migrations e seed são responsabilidade do job `db-migrate` do CD da API, não deste apply. O Secrets Manager publica a senha fornecida pelo operador; isso não habilita rotação nem elimina sua persistência no Terraform state.
+A stack precisa do state de infra-base. Migrations e seed são responsabilidade
+do job `db-migrate` do CD da API, não deste apply. RDS gera a senha e mantém seu
+Secret no Secrets Manager; Terraform conserva somente metadados/ARN no State e
+a rotação automática permanece desabilitada.
 
 ## Secrets e Variables
 
@@ -176,7 +182,9 @@ equipe. Ambos os workflows fixam `AWS_REGION=us-east-1`.
 | Variable | `BOT_APP_ID` | CI, `Generate GitHub App Token` | ID do App instalado no repositório |
 | Secret | `BOT_PRIVATE_KEY` | CI, `Generate GitHub App Token` | Chave privada do App |
 | Variable | `ENABLE_DEPLOY` | Condition do job de CD | `true` habilita deploy automático; manual ainda exige `main` |
-| Secret | `DB_PASSWORD` ou `TF_VAR_DB_PASSWORD` | Plan do CI; plan/apply do CD | Senha mestra; o CI admite fallback fictício só para preview, o CD exige a credencial real |
+
+Não existe Secret ou Variable do GitHub para a senha do banco. A credencial não
+é input dos workflows nem do Terraform.
 
 As Variables do GitHub só são injetadas onde o YAML as referencia; não viram
 automaticamente inputs de uma execução local. A região dos recursos localmente
@@ -191,6 +199,6 @@ workflows, não apenas o input.
 - Não há workflow de destroy. A ordem de provisionamento/destruição e os custos do componente estão em [Como Executar Localmente](../README.md#-como-executar-localmente).
 - Logs do run e `$GITHUB_STEP_SUMMARY` mostram quais steps efetivamente executaram; a existência desta documentação não comprova um run cloud.
 
-Decisões relacionadas: [ADR 0001 — RDS gerenciado](adr/0001-banco-gerenciado-amazon-rds.md), [ADR 0002 — Senha sensível e Secrets Manager](adr/0002-credencial-via-variavel-terraform-sensivel.md) e [ADR 0003 de infra-base — Tolerância do CI às credenciais](https://github.com/FIAP-15SOAT/oficina-mecanica-infra-base/blob/main/docs/adr/0003-ci-tolerante-a-indisponibilidade-do-lab.md).
+Decisões relacionadas: [ADR 0001 — RDS gerenciado](adr/0001-banco-gerenciado-amazon-rds.md), [ADR 0002 — decisão substituída](adr/0002-credencial-via-variavel-terraform-sensivel.md), [ADR 0003 — master password gerenciada pelo RDS](adr/0003-master-password-gerenciada-pelo-rds.md) e [ADR 0003 de infra-base — Tolerância do CI às credenciais](https://github.com/FIAP-15SOAT/oficina-mecanica-infra-base/blob/main/docs/adr/0003-ci-tolerante-a-indisponibilidade-do-lab.md).
 
 Voltar ao [README](../README.md).

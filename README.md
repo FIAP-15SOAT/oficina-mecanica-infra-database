@@ -38,19 +38,19 @@ A [API](https://github.com/FIAP-15SOAT/oficina-mecanica-api) é a entrada centra
    - `secgrp-rds-oficina-mecanica` libera TCP na porta do banco a partir de **toda a CIDR da VPC**, padrão `10.0.0.0/16`, com saída sem restrição.
    - A regra permite a comunicação interna de EKS/Lambda, mas não restringe o acesso apenas aos pods ou a um SG de origem. Um terminal externo precisa de conectividade interna apropriada para acessar o banco privado.
 
-4. **Credencial no AWS Secrets Manager (`secrets.tf`)**:
-   - Cria `oficina-mecanica/database/credentials` e publica uma versão JSON com `username` e `password`, definidos pelas variáveis do banco.
-   - `db_password` é obrigatório, sem default e sensível. O módulo não gera senha, não habilita rotação automática nem usa senha gerenciada pelo RDS.
-   - `sensitive` mascara a exibição. O segredo usa `recovery_window_in_days = 0`, com exclusão imediata no destroy. A decisão está no [ADR 0002](docs/adr/0002-credencial-via-variavel-terraform-sensivel.md).
+4. **Master password gerenciada pelo RDS (`rds.tf` e `secrets.tf`)**:
+   - `manage_master_user_password = true` delega ao RDS a geração e o lifecycle da credencial, mantida em um Secret do AWS Secrets Manager que pertence à instância.
+   - O Terraform publica somente o ARN computado. Ele não recebe senha, não escreve `SecretString` e não cria versão própria do Secret; a chave de criptografia é a padrão do Secrets Manager.
+   - A rotação automática fica explicitamente desabilitada, sem Lambda de rotação. O contrato, o impacto no State e as alternativas estão no [ADR 0003](docs/adr/0003-master-password-gerenciada-pelo-rds.md).
 
 ![Arquitetura da infraestrutura de banco](docs/diagrams/infrastructure.png)
 
 ### Credenciais, consumidores e migrações
 
-- A [Lambda de autenticação](https://github.com/FIAP-15SOAT/oficina-mecanica-lambda-customer-auth) lê host, porta, banco e ARN do segredo no state desta stack, obtendo `username`/`password` do Secrets Manager com sua role existente.
-- A [API](https://github.com/FIAP-15SOAT/oficina-mecanica-api) recebe `DB_HOST`, `DB_PORT`, `DB_NAME` e `DB_USER` como Variables de seu CD, e a senha como Secret `DB_PASSWORD` ou `TF_VAR_DB_PASSWORD`. Seu CD cria a configuração Kubernetes; não obtém automaticamente a senha deste segredo.
+- A [Lambda de autenticação](https://github.com/FIAP-15SOAT/oficina-mecanica-lambda-customer-auth) lê host, porta, banco e ARN pelo remote state, obtendo `username`/`password` diretamente do Secret gerenciado pelo RDS com sua role existente.
+- A [API](https://github.com/FIAP-15SOAT/oficina-mecanica-api) usa o identificador não sensível da instância para descobrir metadados e o ARN durante o CD. O workflow lê `AWSCURRENT`, cria `database-credentials` no Kubernetes e não mantém senha, host ou ARN no GitHub.
 - O job `db-migrate` do **CD da API** executa `prisma migrate deploy` dentro do EKS antes de `app-deploy`. Este Terraform provisiona o banco, mas não cria tabelas nem executa migrations.
-- Ao alterar a senha, alinhe os consumidores. Publicar uma nova versão do segredo não atualiza por si só a configuração já carregada pela API.
+- Uma nova versão de `AWSCURRENT` exige nova execução do CD da API para materializar a URL e reiniciar os Pods. A rotação automática não está habilitada nesta entrega.
 
 ---
 
@@ -78,7 +78,7 @@ A [API](https://github.com/FIAP-15SOAT/oficina-mecanica-api) é a entrada centra
 │   ├── outputs.tf  # Outputs de integração
 │   ├── providers.tf  # Providers e leitura de remote state quando aplicável
 │   ├── rds.tf  # RDS PostgreSQL e DB subnet group
-│   ├── secrets.tf  # Segredo e versão com username/password
+│   ├── secrets.tf  # Configuração explícita de rotação do Secret gerenciado
 │   ├── security_group.tf  # Security Group do banco
 │   ├── terraform.tfvars.example  # Referência para configurar o ambiente
 │   └── variables.tf  # Variáveis de entrada
@@ -136,7 +136,6 @@ Para a execução automatizada dos pipelines de CI e CD, configure os seguintes 
 | `AWS_SECRET_ACCESS_KEY` | Secret Access Key do AWS Academy |
 | `AWS_SESSION_TOKEN` | Token temporário de sessão do AWS Academy |
 | `BOT_PRIVATE_KEY` | Chave privada (`.pem`) do GitHub App para autenticação de automação de PRs |
-| `DB_PASSWORD` ou `TF_VAR_DB_PASSWORD` | Senha mestra do banco; o workflow injeta `TF_VAR_db_password` |
 
 ### Variáveis do GitHub (`Settings > Secrets and variables > Actions > Variables`)
 
@@ -145,7 +144,7 @@ Para a execução automatizada dos pipelines de CI e CD, configure os seguintes 
 | `BOT_APP_ID` | — | ID numérico do GitHub App configurado na Organização |
 | `ENABLE_DEPLOY` | Conforme o ambiente | Habilita a execução do job `terraform apply` no workflow de CD |
 
-No CI, quando ambos os Secrets de senha faltam, o plan usa um valor fictício somente para preview. O CD não tem esse fallback: um dos dois Secrets deve conter a senha definida para o banco. O disparo manual também precisa selecionar `main`. Consulte [CI/CD](docs/ci-cd.md) para as conditions e steps completos.
+O disparo manual do CD também precisa selecionar `main`. Consulte [CI/CD](docs/ci-cd.md) para as conditions e steps completos.
 
 ---
 
@@ -166,8 +165,7 @@ No CI, quando ambos os Secrets de senha faltam, o plan usa um valor fictício so
 | `db_allocated_storage` | `number` | `20` | Armazenamento em GiB | Define a capacidade inicial do volume `gp3` criptografado associado ao RDS. |
 | `db_max_allocated_storage` | `number` | `20` | Teto de armazenamento; igual ao inicial não deixa margem para crescimento | Preenche `max_allocated_storage` do RDS; deve ser maior que `db_allocated_storage` para permitir crescimento automático do volume. |
 | `db_name` | `string` | `techchallenge` | Banco inicial; a referência tfvars usa techchallenge | Cria o banco inicial no RDS e fornece o output homônimo; os consumidores usam esse nome para selecionar o banco na conexão. |
-| `db_username` | `string` | `techchallenge` | Master username; a referência tfvars usa techchallenge | Configura o usuário mestre do RDS e o campo `username` do segredo lido pela Lambda; deve corresponder ao `DB_USER` configurado na API. |
-| `db_password` | `string` | `obrigatória, sem default` | Senha mestra, sensitive=true; injeção TF_VAR_db_password | Configura a senha do usuário mestre e o campo `password` do segredo da Lambda; no CD, recebe `DB_PASSWORD` ou `TF_VAR_DB_PASSWORD` dos Secrets do GitHub. |
+| `db_username` | `string` | `techchallenge` | Master username; a referência tfvars usa techchallenge | Configura o usuário mestre do RDS e o campo `username` do Secret gerenciado; a API o descobre em `DescribeDBInstances`. |
 | `db_port` | `number` | `5432` | Porta PostgreSQL/SG | Configura a porta de conexão do RDS e a regra de entrada do Security Group que permite acesso a partir do CIDR da VPC. |
 | `multi_az` | `bool` | `false` | Habilita Multi-AZ; padrão Single-AZ | Preenche `multi_az` da instância RDS; o valor atual mantém o banco na configuração Single-AZ da solução. |
 | `backup_retention_period` | `number` | `0` | Dias de backup automático; zero desabilita | Configura a retenção de backups automáticos na instância RDS; definir um valor positivo habilita sua retenção pelo período escolhido. |
@@ -178,8 +176,8 @@ No CI, quando ambos os Secrets de senha faltam, o plan usa um valor fictício so
 ### Saídas Exportadas (Outputs)
 
 A Lambda lê `db_host`, `db_port`, `db_name` e `db_credentials_secret_arn` pelo
-remote state. Na API, os dados de conexão são configurados nas Variables e
-Secrets do GitHub usados pelo CD; não há leitura automática desse state.
+remote state. A API descobre os mesmos metadados no RDS durante seu CD, a partir
+do identificador não sensível da instância, e não consome esse State.
 As demais saídas servem como referências operacionais e não são consumidas
 automaticamente pelas stacks atuais.
 
@@ -188,12 +186,12 @@ automaticamente pelas stacks atuais.
 | `db_instance_id` | Identificador da instância RDS | — | Permite localizar a instância no console e consultar seu status, eventos e configuração. |
 | `db_instance_arn` | ARN da instância | — | Permite referenciar a instância por seu identificador completo em consultas e políticas IAM que precisem desse recurso. |
 | `db_endpoint` | Host e porta combinados para conexão | `rds-oficina-mecanica.xxxx.us-east-1.rds.amazonaws.com:5432` | Fornece o destino `host:porta` para configurar clientes PostgreSQL e verificar a conectividade a partir da VPC. |
-| `db_host` | Endereço DNS do host (utilizado em `DB_HOST`) | `rds-oficina-mecanica.xxxx.us-east-1.rds.amazonaws.com` | Preenche `DATABASE_HOST` da Lambda via remote state e serve de referência para configurar `DB_HOST` no GitHub da API. |
+| `db_host` | Endereço DNS do host | `rds-oficina-mecanica.xxxx.us-east-1.rds.amazonaws.com` | Preenche `DATABASE_HOST` da Lambda via remote state; a API descobre o endpoint diretamente no RDS durante o CD. |
 | `db_address` | Endereço DNS do host (alias para `db_host`) | `rds-oficina-mecanica.xxxx.us-east-1.rds.amazonaws.com` | Oferece o mesmo endereço para configurações que usem o nome `db_address`; a integração atual da Lambda lê `db_host`. |
-| `db_port` | Porta do PostgreSQL | `5432` | Preenche `DATABASE_PORT` da Lambda via remote state e serve de referência para configurar `DB_PORT` usado pelo CD da API. |
-| `db_name` | Nome inicial do banco | `techchallenge` | Preenche `DATABASE_NAME` da Lambda via remote state e serve de referência para configurar `DB_NAME` usado pelo CD da API. |
+| `db_port` | Porta do PostgreSQL | `5432` | Preenche `DATABASE_PORT` da Lambda via remote state e é descoberto pela API durante o CD. |
+| `db_name` | Nome inicial do banco | `techchallenge` | Preenche `DATABASE_NAME` da Lambda via remote state e é descoberto pela API durante o CD. |
 | `db_security_group_id` | ID do Security Group do RDS | `sg-0123456789abcdef0` | Permite localizar e inspecionar as regras de rede do banco ao investigar falhas de acesso a partir da VPC. |
-| `db_credentials_secret_arn` | ARN do segredo que armazena `username` e `password` | — | Preenche `DATABASE_SECRET_ID` da Lambda via remote state; a aplicação usa esse ARN para buscar as credenciais no Secrets Manager ao conectar ao banco. |
+| `db_credentials_secret_arn` | ARN do Secret gerenciado pelo RDS | — | Preenche `DATABASE_SECRET_ID` da Lambda via remote state; a API descobre o ARN em `MasterUserSecret` durante o CD. |
 
 ---
 
@@ -205,7 +203,6 @@ automaticamente pelas stacks atuais.
 - **AWS CLI v2** configurada com as três credenciais temporárias do AWS Academy.
 - Infra-base previamente aplicada, com acesso aos states/lockfiles S3 e permissões RDS/Secrets Manager.
 - Valores de `terraform.tfvars.example` revisados; não há `terraform.tfvars` versionado. Esse nome é ignorado pelo `.gitignore`. Se já houver um arquivo local, preserve-o e confira os valores em vez de sobrescrevê-lo.
-- Senha mestra definida para o banco, fornecida por `TF_VAR_db_password` no terminal e alinhada com os Secrets dos consumidores.
 
 ### Passos para Inicialização e Deploy
 
@@ -215,32 +212,24 @@ Na raiz do clone, com sessão AWS válida:
 # 1. Acessar o diretório da configuração Terraform
 cd terraform
 
-# 2. Fornecer a senha real do banco somente no ambiente do terminal
-export TF_VAR_db_password="<senha-definida-para-o-banco>"
-
-# 3. Inicializar os providers e o backend remoto
+# 2. Inicializar os providers e o backend remoto
 terraform init
 
-# 4. Verificar a formatação sem modificar os arquivos
+# 3. Verificar a formatação sem modificar os arquivos
 terraform fmt -check -recursive
 
-# 5. Validar a sintaxe e a consistência da configuração
+# 4. Validar a sintaxe e a consistência da configuração
 terraform validate
 
-# 6. Visualizar o plano de execução
+# 5. Visualizar o plano de execução
 terraform plan
 
-# 7. Aplicar a infraestrutura após revisar o plano
+# 6. Aplicar a infraestrutura após revisar o plano
 terraform apply
 
-# 8. Consultar os outputs para configurar API e Lambda
+# 7. Consultar os outputs para configurar API e Lambda
 terraform output
 ```
-
-Substitua o placeholder pela senha definida para o banco. Em PowerShell,
-forneça a mesma variável com `$env:TF_VAR_db_password`. Os nomes de Secrets no
-GitHub são `DB_PASSWORD` e `TF_VAR_DB_PASSWORD` (maiúsculos); os workflows
-fazem a conversão para `TF_VAR_db_password`.
 
 ### Validação estática, sem sessão AWS ativa
 
@@ -296,4 +285,5 @@ A [documentação de CI/CD](docs/ci-cd.md) explica cada job/step, conditions, au
 ## 📐 Decisões Arquiteturais
 
 - [ADR 0001 — Banco de dados relacional como serviço gerenciado (Amazon RDS)](docs/adr/0001-banco-gerenciado-amazon-rds.md)
-- [ADR 0002 — Senha do banco por variável Terraform sensível e publicação no Secrets Manager](docs/adr/0002-credencial-via-variavel-terraform-sensivel.md)
+- [ADR 0002 — Senha do banco por variável Terraform sensível e publicação no Secrets Manager (substituído)](docs/adr/0002-credencial-via-variavel-terraform-sensivel.md)
+- [ADR 0003 — Master password gerenciada pelo Amazon RDS](docs/adr/0003-master-password-gerenciada-pelo-rds.md)

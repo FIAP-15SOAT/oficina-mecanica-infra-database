@@ -14,7 +14,7 @@ output "db_endpoint" {
 }
 
 output "db_host" {
-  description = "RDS hostname address (matches DB_HOST variable)"
+  description = "RDS hostname address"
   value       = aws_db_instance.rds_postgres.address
 }
 
@@ -39,6 +39,6 @@ output "db_security_group_id" {
 }
 
 output "db_credentials_secret_arn" {
-  description = "ARN do segredo com a credencial do banco, na forma usuario e senha"
-  value       = aws_secretsmanager_secret.db_credentials.arn
+  description = "ARN of the credentials secret managed by RDS"
+  value       = aws_db_instance.rds_postgres.master_user_secret[0].secret_arn
 }
