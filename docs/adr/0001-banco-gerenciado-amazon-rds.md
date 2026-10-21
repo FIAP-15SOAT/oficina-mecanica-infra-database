@@ -6,9 +6,9 @@ Aceito — 2026-09-07
 
 ## Contexto
 
-A escolha da **tecnologia** de banco de dados (PostgreSQL, e por quê) já está registrada no repositório da aplicação — ver [ADR 0001 do `oficina-mecanica-api`](https://github.com/FIAP-15SOAT/oficina-mecanica-api/blob/main/docs/adr/0001-uso-do-postgresql-como-banco-de-dados.md). Esta ADR trata de uma decisão diferente e específica deste repositório: **onde e como esse PostgreSQL roda** — como um serviço gerenciado pela nuvem, ou auto-hospedado (dentro do cluster Kubernetes ou numa instância EC2 dedicada).
+A escolha da **tecnologia** de banco de dados (PostgreSQL, e por quê) já está registrada no repositório da aplicação — ver [ADR 0001 do `oficina-mecanica-work-order-service`](https://github.com/FIAP-15SOAT/oficina-mecanica-work-order-service/blob/main/docs/adr/0001-uso-do-postgresql-como-banco-de-dados.md). Esta ADR trata de uma decisão diferente e específica deste repositório: **onde e como esse PostgreSQL roda** — como um serviço gerenciado pela nuvem, ou auto-hospedado (dentro do cluster Kubernetes ou numa instância EC2 dedicada).
 
-O ambiente é `prod-simulated` em conta AWS Academy, com orçamento limitado e infraestrutura descrita na [visão da API](https://github.com/FIAP-15SOAT/oficina-mecanica-api/blob/main/docs/infra/overview.md). Na fase anterior, PostgreSQL no EKS com armazenamento `emptyDir` não oferecia persistência entre reagendamentos de pods. O banco atual é um recurso RDS independente do cluster.
+O ambiente é `prod-simulated` em conta AWS Academy, com orçamento limitado e infraestrutura descrita na [visão da API](https://github.com/FIAP-15SOAT/oficina-mecanica-work-order-service/blob/main/docs/infra/overview.md). Na fase anterior, PostgreSQL no EKS com armazenamento `emptyDir` não oferecia persistência entre reagendamentos de pods. O banco atual é um recurso RDS independente do cluster.
 
 ## Decisão
 
@@ -64,7 +64,7 @@ Ofereceria melhor elasticidade (Aurora Serverless v2 escala capacidade automatic
 
 ## Referências
 
-- [`oficina-mecanica-api` › ADR 0001 — Uso do PostgreSQL como banco de dados relacional](https://github.com/FIAP-15SOAT/oficina-mecanica-api/blob/main/docs/adr/0001-uso-do-postgresql-como-banco-de-dados.md)
-- [`oficina-mecanica-api` — Visão de infraestrutura](https://github.com/FIAP-15SOAT/oficina-mecanica-api/blob/main/docs/infra/overview.md)
-- [`oficina-mecanica-api` › docs/infra/kubernetes.md — Banco de Dados Relacional (Amazon RDS)](https://github.com/FIAP-15SOAT/oficina-mecanica-api/blob/main/docs/infra/kubernetes.md#banco-de-dados-relacional-amazon-rds)
+- [`oficina-mecanica-work-order-service` › ADR 0001 — Uso do PostgreSQL como banco de dados relacional](https://github.com/FIAP-15SOAT/oficina-mecanica-work-order-service/blob/main/docs/adr/0001-uso-do-postgresql-como-banco-de-dados.md)
+- [`oficina-mecanica-work-order-service` — Visão de infraestrutura](https://github.com/FIAP-15SOAT/oficina-mecanica-work-order-service/blob/main/docs/infra/overview.md)
+- [`oficina-mecanica-work-order-service` › docs/infra/kubernetes.md — Banco de Dados Relacional (Amazon RDS)](https://github.com/FIAP-15SOAT/oficina-mecanica-work-order-service/blob/main/docs/infra/kubernetes.md#banco-de-dados-relacional-amazon-rds)
 - `terraform/rds.tf`, `terraform/variables.tf` — configuração corrente da instância.
