@@ -17,7 +17,7 @@ Este repositório contém o código de **Infraestrutura como Código (IaC)** res
 
 Faz parte do ecossistema de serviços e infraestrutura da pós-graduação em Arquitetura de Software da FIAP (turma 15SOAT).
 
-A [API](https://github.com/FIAP-15SOAT/oficina-mecanica-api) é a entrada central da documentação da solução.
+A [API](https://github.com/FIAP-15SOAT/oficina-mecanica-work-order-service) é a entrada central da documentação da solução.
 
 ---
 
@@ -48,7 +48,7 @@ A [API](https://github.com/FIAP-15SOAT/oficina-mecanica-api) é a entrada centra
 ### Credenciais, consumidores e migrações
 
 - A [Lambda de autenticação](https://github.com/FIAP-15SOAT/oficina-mecanica-lambda-customer-auth) lê host, porta, banco e ARN pelo remote state, obtendo `username`/`password` diretamente do Secret gerenciado pelo RDS com sua role existente.
-- A [API](https://github.com/FIAP-15SOAT/oficina-mecanica-api) usa o identificador não sensível da instância para descobrir metadados e o ARN durante o CD. O workflow lê `AWSCURRENT`, cria `database-credentials` no Kubernetes e não mantém senha, host ou ARN no GitHub.
+- A [API](https://github.com/FIAP-15SOAT/oficina-mecanica-work-order-service) usa o identificador não sensível da instância para descobrir metadados e o ARN durante o CD. O workflow lê `AWSCURRENT`, cria `database-credentials` no Kubernetes e não mantém senha, host ou ARN no GitHub.
 - O job `db-migrate` do **CD da API** executa `prisma migrate deploy` dentro do EKS antes de `app-deploy`. Este Terraform provisiona o banco, mas não cria tabelas nem executa migrations.
 - Uma nova versão de `AWSCURRENT` exige nova execução do CD da API para materializar a URL. No escopo greenfield, isso não reinicia Pods existentes automaticamente com a mesma imagem; uma troca manual posterior exige também sua renovação explícita. A rotação automática não está habilitada nesta entrega.
 
