@@ -20,7 +20,6 @@ variable "environment" {
 variable "aws_base_state_bucket" {
   description = "S3 bucket name containing infra-base remote state"
   type        = string
-  default     = "bkt-oficina-mecanica"
 }
 
 variable "aws_base_state_key" {

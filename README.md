@@ -93,12 +93,14 @@ A [API](https://github.com/FIAP-15SOAT/oficina-mecanica-work-order-service) é a
 O estado do Terraform é armazenado remotamente no Amazon S3, com criptografia
 e lock nativo (`use_lockfile = true`):
 
-- **Bucket**: `bkt-oficina-mecanica`
+- **Bucket**: o valor da variável de Actions da organização `TF_STATE_BUCKET`, passado no `terraform init` por `-backend-config`
 - **Chave (Key)**: `infra/prod-simulated/database/terraform.tfstate`
 - **Região**: `us-east-1`
 
 O bucket deve existir, e a identidade AWS precisa acessar state e lockfile.
-Bucket e keys permanecem estáveis na renomeação dos repositórios.
+As keys permanecem estáveis na renomeação dos repositórios. O state da
+infra-base é lido no bucket de `aws_base_state_bucket`, que os workflows
+preenchem com `TF_STATE_BUCKET`.
 
 ### 🔗 Integração com `oficina-mecanica-infra-base`
 
@@ -142,6 +144,7 @@ Para a execução automatizada dos pipelines de CI e CD, configure os seguintes 
 | Variável | Valor Padrão | Descrição |
 |---|---|---|
 | `BOT_APP_ID` | — | ID numérico do GitHub App configurado na Organização |
+| `TF_STATE_BUCKET` | — | Variável da organização com o nome do bucket de state, para trocá-lo sem editar arquivo versionado; vai ao `terraform init` por `-backend-config` e a `TF_VAR_aws_base_state_bucket` |
 | `ENABLE_DEPLOY` | Conforme o ambiente | Habilita a execução do job `terraform apply` no workflow de CD |
 
 O disparo manual do CD também precisa selecionar `main`. Consulte [CI/CD](docs/ci-cd.md) para as conditions e steps completos.
@@ -157,7 +160,7 @@ O disparo manual do CD também precisa selecionar `main`. Consulte [CI/CD](docs/
 | `aws_region` | `string` | `us-east-1` | Região dos recursos | Configura o provider AWS usado para provisionar RDS, Security Group e segredo de credenciais. |
 | `project_name` | `string` | `oficina-mecanica` | Compõe nomes | Forma os nomes do RDS, subnet group, Security Group e segredo `<project_name>/database/credentials`, além da tag `Project`. |
 | `environment` | `string` | `prod-simulated` | Tag Environment | Identifica o ambiente nas tags dos recursos via `default_tags`; alterar esse valor não muda as keys dos states. |
-| `aws_base_state_bucket` | `string` | `bkt-oficina-mecanica` | Bucket da infra-base | Indica o bucket S3 de onde `terraform_remote_state.aws_base` lê os dados da rede já provisionada. |
+| `aws_base_state_bucket` | `string` | — | Bucket da infra-base; os workflows a preenchem com a Variable da organização `TF_STATE_BUCKET` | Indica o bucket S3 de onde `terraform_remote_state.aws_base` lê os dados da rede já provisionada. |
 | `aws_base_state_key` | `string` | `infra/prod-simulated/infra-base/terraform.tfstate` | Key estável da infra-base | Seleciona o state que fornece `vpc_id`, `vpc_cidr` e `private_subnet_ids` para o Security Group e o subnet group do RDS. |
 | `aws_base_state_region` | `string` | `us-east-1` | Região do state de rede | Configura a região de acesso ao bucket S3 na leitura do remote state da infra-base. |
 | `db_engine_version` | `string` | `16.9` | Versão declarada do PostgreSQL | Preenche `engine_version` da instância RDS ao provisionar ou atualizar o banco. |
@@ -212,8 +215,10 @@ Na raiz do clone, com sessão AWS válida:
 # 1. Acessar o diretório da configuração Terraform
 cd terraform
 
-# 2. Inicializar os providers e o backend remoto
-terraform init
+# 2. Informar o bucket de state e inicializar os providers e o backend remoto
+export TF_STATE_BUCKET=<nome do bucket>
+export TF_VAR_aws_base_state_bucket="$TF_STATE_BUCKET"
+terraform init -backend-config="bucket=$TF_STATE_BUCKET"
 
 # 3. Verificar a formatação sem modificar os arquivos
 terraform fmt -check -recursive
@@ -248,7 +253,7 @@ terraform validate
 
 A instalação exige registry ou cache. Se já houver lockfile e quiser preservar
 versões/checksums, acrescente `-lockfile=readonly`. Após a inicialização
-estática, execute `terraform init -reconfigure` antes de um plan remoto.
+estática, execute `terraform init -reconfigure -backend-config="bucket=$TF_STATE_BUCKET"` antes de um plan remoto.
 `validate` não comprova permissões, conectividade SQL ou resultado de um plan.
 
 ### Encerramento do laboratório
