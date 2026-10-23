@@ -14,7 +14,7 @@ Dois workflows do GitHub Actions no repositório `oficina-mecanica-infra-databas
 | Workflow | Arquivo | Gatilho | Responsabilidade |
 | --- | --- | --- | --- |
 | CI | `ci.yml` | `push` em `feature/**` e `fix/**` | fmt/init estático/validate; plan quando autenticação AWS estiver disponível; abertura idempotente de PR para `main` |
-| CD | `cd.yml` | `push` em `main` ou `workflow_dispatch` | init/validate/plan/apply da infraestrutura de dados (RDS PostgreSQL 18 e ElastiCache for Valkey 9.1), com gate por branch e variável de deploy |
+| CD | `cd.yml` | `push` em `main` ou `workflow_dispatch` (`action`: `apply` padrão ou `destroy`) | init/validate e `plan` + `apply` (padrão) ou `destroy` (disparo manual com `action=destroy`) da infraestrutura de dados (RDS PostgreSQL 18 e ElastiCache for Valkey 9.1), com gate por branch e variável de deploy |
 
 **Como ler os diagramas:** cada caixa grande é um **job**; seus **steps** estão
 enumerados dentro dela, na ordem do YAML. A seta entre jobs indica `needs`.
@@ -128,7 +128,7 @@ validate ou um plan executado falhar, `open-pr` não roda.
 | --- | --- | --- | --- |
 | `terraform-database` | Terraform Database | — | `production` |
 
-Existe **um job**, com sete steps sequenciais. Não há jobs separados de plan
+Existe **um job**, com oito steps no YAML (dos quais `Terraform Plan` + `Terraform Apply` e `Terraform Destroy` são mutuamente exclusivos conforme o input `action` do `workflow_dispatch`). Não há jobs separados de plan
 e apply nem dependência com um job de CI. O gate por `main`/`ENABLE_DEPLOY`/
 manual é avaliado no job inteiro antes desses steps.
 
@@ -138,16 +138,17 @@ manual é avaliado no job inteiro antes desses steps.
 2. **Setup Terraform**: instala/configura Terraform no runner.
 3. **Configure AWS Credentials**: configura os três Secrets temporários e
    `us-east-1`. Aqui **não** há `continue-on-error`; credenciais ausentes ou
-   inválidas impedem a inicialização e o apply.
+   inválidas impedem a inicialização e o apply/destroy.
 4. **Terraform Init**: executa `terraform init -no-color -backend-config="bucket=$TF_STATE_BUCKET"` em `terraform/`.
    Instala providers e inicializa o backend S3 configurado para esta stack (`infra/prod-simulated/infra-database-work-order/terraform.tfstate`);
    o bucket precisa existir e ser acessível.
 5. **Terraform Validate**: executa `terraform validate -no-color` antes do
-   plan. O CD não inclui um step de fmt; a formatação pertence ao CI.
-6. **Terraform Plan**: executa `terraform plan -no-color`, exibindo as
+   plan ou destroy. O CD não inclui um step de fmt; a formatação pertence ao CI.
+6. **Terraform Plan** (`if: github.event_name != 'workflow_dispatch' || inputs.action != 'destroy'`): executa `terraform plan -no-color`, exibindo as
    alterações para a infraestrutura de dados e consultando as dependências remotas na `infra-base`. Não há input, Secret do GitHub ou fallback de senha.
-7. **Terraform Apply**: executa `terraform apply -auto-approve -no-color`.
+7. **Terraform Apply** (`if: github.event_name != 'workflow_dispatch' || inputs.action != 'destroy'`): executa `terraform apply -auto-approve -no-color`.
    Aplica os subnet groups, os Security Groups (`secgrp-rds-oficina-mecanica-work-order` e `secgrp-cache-oficina-mecanica-work-order`), a instância RDS PostgreSQL 18 (`rds-oficina-mecanica-work-order`) com master password gerenciada e rotação desabilitada, o replication group ElastiCache for Valkey 9.1 (`cache-oficina-mecanica-work-order`) com TLS obrigatório e o secret `cache-oficina-mecanica-work-order-auth-token` via argumentos write-only.
+8. **Terraform Destroy** (`if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'`): executa `terraform destroy -auto-approve -no-color`, removendo o RDS, o ElastiCache, o secret do cache, os Security Groups e os subnet groups desta camada e atualizando o state remoto no S3. Usado pelo script `scripts/environment-down.sh` na Camada 2 da derrubada ordenada.
 
 Uma falha interrompe a sequência e falha o job. Não há upload de artifact de
 plano, migration ou deploy da aplicação nesse workflow.
