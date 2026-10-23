@@ -16,6 +16,12 @@ variable "environment" {
   default     = "prod-simulated"
 }
 
+variable "service_context" {
+  description = "Bounded context identifier for resource naming"
+  type        = string
+  default     = "work-order"
+}
+
 # Remote state inputs from infra-base
 variable "aws_base_state_bucket" {
   description = "S3 bucket name containing infra-base remote state"
@@ -38,7 +44,7 @@ variable "aws_base_state_region" {
 variable "db_engine_version" {
   description = "PostgreSQL engine version"
   type        = string
-  default     = "16.9"
+  default     = "18"
 }
 
 variable "db_instance_class" {
