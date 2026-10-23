@@ -8,7 +8,7 @@ aws_base_state_key    = "infra/prod-simulated/infra-base/terraform.tfstate"
 aws_base_state_region = "us-east-1"
 
 # RDS PostgreSQL Configuration
-db_engine_version        = "16.9"
+db_engine_version        = "18"
 db_instance_class        = "db.t4g.micro"
 db_allocated_storage     = 20
 db_max_allocated_storage = 20

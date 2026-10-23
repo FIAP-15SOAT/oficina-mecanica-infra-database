@@ -18,7 +18,7 @@ env:
 
 jobs:
   terraform-database:
-    name: Terraform Database RDS
+    name: Terraform Database
     runs-on: ubuntu-latest
     environment: production
     if: >-

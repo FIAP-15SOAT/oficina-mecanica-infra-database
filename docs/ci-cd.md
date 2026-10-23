@@ -1,8 +1,6 @@
-# 🔄 CI/CD — Database RDS
+# 🔄 CI/CD — Dados do Work Order (RDS PostgreSQL & ElastiCache for Valkey)
 
-Dois workflows do GitHub Actions, um por responsabilidade: validar a branch e
-abrir PR (**CI**), ou aplicar a infraestrutura (**CD**). A fonte executável é
-[ci.yml](../.github/workflows/ci.yml) e [cd.yml](../.github/workflows/cd.yml).
+Dois workflows do GitHub Actions no repositório `oficina-mecanica-infra-database-work-order`, um por responsabilidade: validar a branch e abrir PR (**CI**), ou aplicar a infraestrutura de dados do contexto `work-order` (**CD**). A fonte executável é [ci.yml](../.github/workflows/ci.yml) e [cd.yml](../.github/workflows/cd.yml).
 
 ## Índice
 
@@ -16,7 +14,7 @@ abrir PR (**CI**), ou aplicar a infraestrutura (**CD**). A fonte executável é
 | Workflow | Arquivo | Gatilho | Responsabilidade |
 | --- | --- | --- | --- |
 | CI | `ci.yml` | `push` em `feature/**` e `fix/**` | fmt/init estático/validate; plan quando autenticação AWS estiver disponível; abertura idempotente de PR para `main` |
-| CD | `cd.yml` | `push` em `main` ou `workflow_dispatch` | init/validate/plan/apply da infraestrutura, com gate por branch e variável de deploy |
+| CD | `cd.yml` | `push` em `main` ou `workflow_dispatch` | init/validate/plan/apply da infraestrutura de dados (RDS PostgreSQL 18 e ElastiCache for Valkey 9.1), com gate por branch e variável de deploy |
 
 **Como ler os diagramas:** cada caixa grande é um **job**; seus **steps** estão
 enumerados dentro dela, na ordem do YAML. A seta entre jobs indica `needs`.
@@ -57,8 +55,7 @@ github.ref == 'refs/heads/main' &&
 
 Assim, deploy automático exige o valor literal `true` em `ENABLE_DEPLOY`.
 O disparo manual pode aplicar com a variável desligada, **mas também precisa
-selecionar `main`**. Uma execução manual em outra branch pula o job. A
-documentação não pressupõe novos required reviewers no environment.
+selecionar `main`**. Uma execução manual em outra branch pula o job.
 
 ## 1) Workflow de CI
 
@@ -79,26 +76,23 @@ completo no YAML, com a versão correspondente registrada em comentário.
    push no runner. Sem ele, os comandos não teriam a configuração da branch.
 2. **Setup Terraform** (`hashicorp/setup-terraform`): instala/configura a CLI
    Terraform usada pelos steps seguintes. As restrições de compatibilidade da
-   configuração continuam definidas nos arquivos Terraform.
+   configuração continuam definidas nos arquivos Terraform (`>= 1.11.0`, provider AWS `>= 6.62.0, < 7.0.0`).
 3. **Terraform Fmt Check**: executa `terraform fmt -check -recursive`. Verifica
    a formatação sem alterar arquivos; divergência de formato falha o job.
 4. **Terraform Init Database**: executa `terraform init -backend=false -no-color`.
    Instala os providers, sem conectar ao backend S3. Ainda depende de registry
    ou cache disponível para instalar os pacotes.
 5. **Terraform Validate Database**: executa `terraform validate -no-color`, verificando
-   sintaxe, referências e consistência com os schemas dos providers. Falhas
-   impedem os steps seguintes e a abertura do PR.
+   sintaxe, referências e consistência com os schemas dos providers (incluindo o recurso efêmero e os argumentos write-only). Falhas impedem os steps seguintes e a abertura do PR.
 6. **Configure AWS Credentials** (`aws-actions/configure-aws-credentials`,
    `id: aws_creds`): usa os Secrets de access key, secret key e session token,
    com região `us-east-1`. Somente esse step tem `continue-on-error: true`;
    `steps.aws_creds.outcome` conserva o resultado real para decidir os próximos.
 7. **Terraform Plan Database**: executa somente se
    `steps.aws_creds.outcome == 'success'`. Primeiro faz
-   `terraform init -reconfigure -no-color -backend-config="bucket=$TF_STATE_BUCKET"` para habilitar o backend remoto;
-   depois `terraform plan -no-color` consulta a AWS e os states necessários e
-   mostra as mudanças propostas. Não recebe nem deriva senha: a master password
-   é gerada e mantida pelo RDS. Uma falha de init/plan nessa condição **falha o
-   job**; a tolerância não cobre erros depois de autenticar.
+   `terraform init -reconfigure -no-color -backend-config="bucket=$TF_STATE_BUCKET"` para habilitar o backend remoto na chave `infra/prod-simulated/infra-database-work-order/terraform.tfstate`;
+   depois `terraform plan -no-color` consulta a AWS e o state da `infra-base` e
+   mostra as mudanças propostas. Não recebe nem imprime senhas: a master password é gerenciada pelo RDS e o token do ElastiCache passa por argumentos write-only (`auth_token_wo` e `secret_string_wo`). Uma falha de init/plan nessa condição **falha o job**; a tolerância não cobre erros depois de autenticar.
 8. **Note skipped plan in job summary**: executa somente se
    `steps.aws_creds.outcome == 'failure'`. Acrescenta ao `$GITHUB_STEP_SUMMARY`
    a informação de que o plan foi pulado, mantendo fmt/validate como evidência
@@ -132,13 +126,13 @@ validate ou um plan executado falhar, `open-pr` não roda.
 
 | Job | Nome exibido | `needs` | Ambiente |
 | --- | --- | --- | --- |
-| `terraform-database` | Terraform Database RDS | — | `production` |
+| `terraform-database` | Terraform Database | — | `production` |
 
 Existe **um job**, com sete steps sequenciais. Não há jobs separados de plan
 e apply nem dependência com um job de CI. O gate por `main`/`ENABLE_DEPLOY`/
 manual é avaliado no job inteiro antes desses steps.
 
-### Job `terraform-database` — Terraform Database RDS
+### Job `terraform-database` — Terraform Database
 
 1. **Checkout**: obtém a revisão de `main` selecionada pelo evento/disparo.
 2. **Setup Terraform**: instala/configura Terraform no runner.
@@ -146,27 +140,20 @@ manual é avaliado no job inteiro antes desses steps.
    `us-east-1`. Aqui **não** há `continue-on-error`; credenciais ausentes ou
    inválidas impedem a inicialização e o apply.
 4. **Terraform Init**: executa `terraform init -no-color -backend-config="bucket=$TF_STATE_BUCKET"` em `terraform/`.
-   Instala providers e inicializa o backend S3 configurado para esta stack;
+   Instala providers e inicializa o backend S3 configurado para esta stack (`infra/prod-simulated/infra-database-work-order/terraform.tfstate`);
    o bucket precisa existir e ser acessível.
 5. **Terraform Validate**: executa `terraform validate -no-color` antes do
    plan. O CD não inclui um step de fmt; a formatação pertence ao CI.
 6. **Terraform Plan**: executa `terraform plan -no-color`, exibindo as
-   alterações para a infraestrutura e consultando as dependências remotas. Não
-   há input, Secret do GitHub ou fallback de senha.
+   alterações para a infraestrutura de dados e consultando as dependências remotas na `infra-base`. Não há input, Secret do GitHub ou fallback de senha.
 7. **Terraform Apply**: executa `terraform apply -auto-approve -no-color`.
-   Aplica subnet group, SG e RDS com master password gerenciada pelo serviço,
-   além da configuração explícita de rotação desabilitada. Não há arquivo de
-   plano salvo por `-out`: o apply calcula seu próprio plano, em vez de reaplicar
-   um artifact do step anterior.
+   Aplica os subnet groups, os Security Groups (`secgrp-rds-oficina-mecanica-work-order` e `secgrp-cache-oficina-mecanica-work-order`), a instância RDS PostgreSQL 18 (`rds-oficina-mecanica-work-order`) com master password gerenciada e rotação desabilitada, o replication group ElastiCache for Valkey 9.1 (`cache-oficina-mecanica-work-order`) com TLS obrigatório e o secret `cache-oficina-mecanica-work-order-auth-token` via argumentos write-only.
 
 Uma falha interrompe a sequência e falha o job. Não há upload de artifact de
-plano, etapa de destroy, migration ou deploy da aplicação nesse workflow.
+plano, migration ou deploy da aplicação nesse workflow.
 `TF_IN_AUTOMATION=true` é definido no CD para o uso automatizado da CLI.
 
-A stack precisa do state de infra-base. Migrations e seed são responsabilidade
-do job `db-migrate` do CD da API, não deste apply. RDS gera a senha e mantém seu
-Secret no Secrets Manager; Terraform conserva somente metadados/ARN no State e
-a rotação automática permanece desabilitada.
+A stack precisa do state de `oficina-mecanica-infra-base`. Migrations e seed são responsabilidade do job `db-migrate` do CD do `oficina-mecanica-work-order-service`, não deste apply. O RDS gera sua master password e mantém seu Secret no Secrets Manager; para o ElastiCache, o recurso efêmero gera o token durante o apply e os argumentos write-only gravam o valor no replication group e no Secrets Manager sem persistir nenhuma credencial no State.
 
 ## Secrets e Variables
 
@@ -174,18 +161,17 @@ Configure os nomes abaixo em **Settings → Secrets and variables → Actions**,
 nos tipos corretos, conforme o nível de repo/organização/environment usado pela
 equipe. Ambos os workflows fixam `AWS_REGION=us-east-1`.
 
-| Tipo | Nome | Usado em | Finalidade |
-| --- | --- | --- | --- |
-| Secret | `AWS_ACCESS_KEY_ID` | CI e CD | Access key temporária do laboratório |
-| Secret | `AWS_SECRET_ACCESS_KEY` | CI e CD | Secret key da mesma sessão |
-| Secret | `AWS_SESSION_TOKEN` | CI e CD | Token temporário; deve corresponder às outras duas credenciais |
-| Variable (organização) | `TF_STATE_BUCKET` | CI e CD (`env` do workflow) | Nome do bucket de state, em variável para trocá-lo sem editar arquivo versionado: vai ao `terraform init` por `-backend-config` e a `TF_VAR_aws_base_state_bucket`; sem ela, o `init` falha |
-| Variable | `BOT_APP_ID` | CI, `Generate GitHub App Token` | ID do App instalado no repositório |
-| Secret | `BOT_PRIVATE_KEY` | CI, `Generate GitHub App Token` | Chave privada do App |
-| Variable | `ENABLE_DEPLOY` | Condition do job de CD | `true` habilita deploy automático; manual ainda exige `main` |
+| Tipo | Nome | Nível | Usado em | Finalidade |
+| --- | --- | --- | --- | --- |
+| Secret | `AWS_ACCESS_KEY_ID` | Organização | CI e CD | Access key temporária do laboratório |
+| Secret | `AWS_SECRET_ACCESS_KEY` | Organização | CI e CD | Secret key da mesma sessão |
+| Secret | `AWS_SESSION_TOKEN` | Organização | CI e CD | Token temporário; deve corresponder às outras duas credenciais |
+| Variable | `TF_STATE_BUCKET` | Organização | CI e CD (`env` do workflow) | Nome do bucket de state, em variável para trocá-lo sem editar arquivo versionado: vai ao `terraform init` por `-backend-config` e a `TF_VAR_aws_base_state_bucket`; sem ela, o `init` falha |
+| Variable | `BOT_APP_ID` | Organização | CI, `Generate GitHub App Token` | ID do App instalado no repositório |
+| Secret | `BOT_PRIVATE_KEY` | Organização | CI, `Generate GitHub App Token` | Chave privada do App |
+| Variable | `ENABLE_DEPLOY` | Repositório | Condition do job de CD | `true` habilita deploy automático; manual ainda exige `main` |
 
-Não existe Secret ou Variable do GitHub para a senha do banco. A credencial não
-é input dos workflows nem do Terraform.
+Não existe Secret ou Variable do GitHub para a senha do banco nem para o token do cache. Nenhuma credencial de dados é input dos workflows ou do Terraform.
 
 As Variables do GitHub só são injetadas onde o YAML as referencia; não viram
 automaticamente inputs de uma execução local. A região dos recursos localmente
@@ -196,10 +182,9 @@ workflows, não apenas o input.
 
 - `fmt`, init sem backend e `validate` são validações estáticas; não confirmam permissões, conectividade ou um plan de infraestrutura.
 - O plan do CI pode ser pulado quando **a configuração de credenciais falha**. Depois de autenticar, indisponibilidade de state, recurso ou API durante o plan falha o job.
-- O job combinado `Terraform Validation` continua opcional nos required checks, conforme a decisão para o AWS Academy. Não foi criado um novo gate de reviewers em `production`.
-- Não há workflow de destroy. A ordem de provisionamento/destruição e os custos do componente estão em [Como Executar Localmente](../README.md#-como-executar-localmente).
-- Logs do run e `$GITHUB_STEP_SUMMARY` mostram quais steps efetivamente executaram; a existência desta documentação não comprova um run cloud.
+- No ruleset da branch `main`, o check `Terraform Validation` é obrigatório antes do merge, sem bypass.
+- A ordem de provisionamento/destruição, os testes de conectividade a partir do cluster e as falhas conhecidas estão no [Runbook](runbook.md) e em [Como Executar Localmente](../README.md#-como-executar-localmente).
 
-Decisões relacionadas: [ADR 0001 — RDS gerenciado](adr/0001-banco-gerenciado-amazon-rds.md), [ADR 0002 — decisão substituída](adr/0002-credencial-via-variavel-terraform-sensivel.md), [ADR 0003 — master password gerenciada pelo RDS](adr/0003-master-password-gerenciada-pelo-rds.md) e [ADR 0003 de infra-base — Tolerância do CI às credenciais](https://github.com/FIAP-15SOAT/oficina-mecanica-infra-base/blob/main/docs/adr/0003-ci-tolerante-a-indisponibilidade-do-lab.md).
+Decisões relacionadas: [ADR 0001 — RDS gerenciado](adr/0001-banco-gerenciado-amazon-rds.md), [ADR 0002 — decisão substituída](adr/0002-credencial-via-variavel-terraform-sensivel.md), [ADR 0003 — master password gerenciada pelo RDS](adr/0003-master-password-gerenciada-pelo-rds.md), [ADR 0004 — um repositório de dados por serviço](adr/0004-um-repositorio-de-dados-por-servico.md), [ADR 0005 — ElastiCache com TLS e senha fora do state](adr/0005-elasticache-com-tls-e-senha-fora-do-state.md) e [ADR 0003 de infra-base — Tolerância do CI às credenciais](https://github.com/FIAP-15SOAT/oficina-mecanica-infra-base/blob/main/docs/adr/0003-ci-tolerante-a-indisponibilidade-do-lab.md).
 
 Voltar ao [README](../README.md).
